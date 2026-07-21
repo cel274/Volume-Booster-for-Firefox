@@ -1,0 +1,16 @@
+{
+  "name": "volumebooster",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild src/content.ts --outfile=dist/content.js --bundle && esbuild src/popup.ts --outfile=dist/popup.js --bundle"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^143.0.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
+  }
+}
