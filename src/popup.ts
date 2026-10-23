@@ -1,14 +1,66 @@
 const tabsList = document.getElementById("tabsList") as HTMLDivElement | null;
-const globalSlider = document.getElementById("globalSlider") as HTMLInputElement | null;
-const globalVal = document.getElementById("globalVal") as HTMLSpanElement | null;
 
 interface GainMessage {
-  type: "get-gain" | "set-gain";
+  type: "get-gain" | "set-gain" | "ping";
   value?: number;
 }
 
 interface GainResponse {
-  gain: number | null;
+  gain?: number | null;
+  pong?: boolean;
+  ok?: boolean;
+}
+
+const injectionPromises = new Map<number, Promise<void>>();
+
+async function ensureContentScript(tabId: number): Promise<boolean> {
+  try {
+    const res = (await browser.tabs.sendMessage(tabId, { type: "ping" } as GainMessage)) as GainResponse;
+    if (res && res.pong) return true;
+  } catch {
+    // Content script not responding yet
+  }
+
+  if (injectionPromises.has(tabId)) {
+    try {
+      await injectionPromises.get(tabId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const promise = (async () => {
+    await browser.scripting.executeScript({
+      target: { tabId },
+      files: ["dist/content.js"],
+    });
+  })();
+
+  injectionPromises.set(tabId, promise);
+
+  try {
+    await promise;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    injectionPromises.delete(tabId);
+  }
+}
+
+async function sendGainMessage(tabId: number, message: GainMessage): Promise<GainResponse | null> {
+  try {
+    return (await browser.tabs.sendMessage(tabId, message)) as GainResponse;
+  } catch {
+    const injected = await ensureContentScript(tabId);
+    if (!injected) return null;
+    try {
+      return (await browser.tabs.sendMessage(tabId, message)) as GainResponse;
+    } catch {
+      return null;
+    }
+  }
 }
 
 function buildTabRow(tab: browser.tabs.Tab, isActive: boolean): HTMLDivElement {
@@ -17,7 +69,7 @@ function buildTabRow(tab: browser.tabs.Tab, isActive: boolean): HTMLDivElement {
 
   const favicon = document.createElement("img");
   favicon.className = "tab-favicon";
-  favicon.src = tab.favIconUrl || "icons/default-favicon.png";
+  favicon.src = tab.favIconUrl || "assets/icon-16.png";
   favicon.onerror = () => {
     favicon.style.visibility = "hidden";
   };
@@ -30,7 +82,7 @@ function buildTabRow(tab: browser.tabs.Tab, isActive: boolean): HTMLDivElement {
 
   const slider = document.createElement("input");
   slider.type = "range";
-  slider.min = "1";
+  slider.min = "0";
   slider.max = "6";
   slider.step = "0.1";
   slider.value = "1";
@@ -44,20 +96,17 @@ function buildTabRow(tab: browser.tabs.Tab, isActive: boolean): HTMLDivElement {
   const tabId = tab.id;
 
   if (tabId != null) {
-    browser.tabs
-      .sendMessage(tabId, { type: "get-gain" } as GainMessage)
-      .then((res: GainResponse) => {
-        if (res && res.gain != null) {
-          slider.value = res.gain.toString();
-          valSpan.innerText = Math.round(res.gain * 100) + "%";
-        }
-      })
-      .catch(() => {});
+    sendGainMessage(tabId, { type: "get-gain" }).then((res) => {
+      if (res && res.gain != null) {
+        slider.value = res.gain.toString();
+        valSpan.innerText = Math.round(res.gain * 100) + "%";
+      }
+    });
 
     slider.addEventListener("input", () => {
       const v = parseFloat(slider.value);
       valSpan.innerText = Math.round(v * 100) + "%";
-      browser.tabs.sendMessage(tabId, { type: "set-gain", value: v } as GainMessage).catch(() => {});
+      sendGainMessage(tabId, { type: "set-gain", value: v });
     });
   }
 
@@ -75,7 +124,12 @@ if (tabsList) {
   ]).then(([allTabs, activeTabs]) => {
     const activeId = activeTabs[0]?.id;
 
-    const sorted = [...allTabs].sort((a, b) => {
+    const filtered = allTabs.filter((tab) => {
+      if (!tab.url) return true;
+      return !tab.url.startsWith("about:") && !tab.url.startsWith("moz-extension:");
+    });
+
+    const sorted = [...filtered].sort((a, b) => {
       const aActive = a.id === activeId ? 0 : 1;
       const bActive = b.id === activeId ? 0 : 1;
       return aActive - bActive;
@@ -85,32 +139,5 @@ if (tabsList) {
       const row = buildTabRow(tab, tab.id === activeId);
       tabsList.appendChild(row);
     }
-  });
-}
-
-if (globalSlider && globalVal) {
-  browser.storage.local.get("globalGain").then((data) => {
-    const saved = data.globalGain;
-    if (typeof saved === "number") {
-      globalSlider.value = saved.toString();
-      globalVal.innerText = Math.round(saved * 100) + "%";
-    }
-  });
-
-  globalSlider.addEventListener("input", () => {
-    const v = parseFloat(globalSlider.value);
-    globalVal.innerText = Math.round(v * 100) + "%";
-
-    browser.storage.local.set({ globalGain: v });
-
-    browser.tabs.query({}).then((tabs) => {
-      for (const tab of tabs) {
-        if (tab.id != null) {
-          browser.tabs
-            .sendMessage(tab.id, { type: "set-gain", value: v } as GainMessage)
-            .catch(() => {});
-        }
-      }
-    });
   });
 }

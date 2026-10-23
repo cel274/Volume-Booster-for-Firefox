@@ -3,7 +3,11 @@
   "name": "Volume Booster for Firefox",
   "version": "1.0",
   "description": "Control the audio volume of each tab individually.",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+  "scripts": ["dist/background.js"]
+  },
   "icons": {
     "16": "assets/icon-16.png",
     "32": "assets/icon-32.png",
